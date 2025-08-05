@@ -97,6 +97,7 @@ class MyScanCheck implements ScanCheck {
 
     @Override
     public AuditResult passiveAudit(HttpRequestResponse baseRequestResponse) {
+        // print("1111111");
         if(baseRequestResponse.request().method().equals("OPTIONS")){
             return auditResult();
         }
@@ -105,19 +106,29 @@ class MyScanCheck implements ScanCheck {
         String request_body = baseRequestResponse.request().bodyToString();
         String response_body = baseRequestResponse.response().bodyToString();
         Boolean is_urlencode = false;
-        if(request_body.contains("%22")){
+        while (request_body.contains("%") && request_body.contains("22") && !request_body.contains("{\"")) {
             try {
                 String request_body_decode = URLDecoder.decode(request_body, "UTF-8");
-                if(request_body_decode.contains("{\"")){
-                    is_urlencode=true;
-                    request_body=request_body_decode;
+                // 如果解码结果与原字符串相同，说明无法再解码，退出循环
+                if (request_body_decode.equals(request_body)) {
+                    break;
+                }
+                // 更新 request_body 为解码结果
+                request_body = request_body_decode;
+                // 检查是否包含 JSON 特征，确认解码成功
+                if (request_body_decode.contains("{\"") && !request_body_decode.contains("%")) {
+                    is_urlencode = true;
+                    break;
                 }
             } catch (Exception e) {
+                // 解码失败，退出循环
+                break;
             }
         }
         
         // get or post
         if (EnableProjectFilterCheckBox) {
+            // print("1111111");
             if (!api.scope().isInScope(baseRequestResponse.request().url())) {
                 return auditResult();
             }
@@ -132,12 +143,20 @@ class MyScanCheck implements ScanCheck {
                 ".webp", ".woff", ".woff2", ".xbm", ".xls", ".xlsx", ".xpm", ".xul", ".xwd", ".zip", ".zip", ".js");
         try {
             URL request_url = new URL(baseRequestResponse.request().url());
+            String path = request_url.getPath();
+
+            // 2. 提取最后一个点之后的内容作为后缀
+            String extension = "";
+            int lastDotIndex = path.lastIndexOf('.');
+            if (lastDotIndex > 0 && lastDotIndex < path.length() - 1) {
+                extension = "."+path.substring(lastDotIndex + 1).toLowerCase();
+            }
             if (Pattern.matches(urlWhitelistText, baseRequestResponse.request().url())) {
                 return auditResult();
             }
             for (int i = 0; i < list.size(); i++) {
                 String type = list.get(i);
-                if (request_url.toString().contains(type) && !request_url.getHost().contains(type)) {
+                if (extension.equals(type) && !request_url.getHost().contains(type)) {
                     return auditResult();
                 }
             }
@@ -442,6 +461,7 @@ class MyScanCheck implements ScanCheck {
                 String json_key1 = m.group(2) + m.group(3);
                 String json_real_value = m.group(5);
                 String json_value1 = m.group(4) + m.group(5);
+                // print(json_value1);
                 if (Pattern.matches(paramWhitelistText, json_real_key)) {
                     continue;
                 }
@@ -581,9 +601,160 @@ class MyScanCheck implements ScanCheck {
                         }
 
                     }
+            
 
                 }
+            }
+            //处理数字无双引号包裹
+            String pattern2 = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+)";
+            Pattern r2 = Pattern.compile(pattern2);
+            // print(request_body);
+            Matcher m2 = r2.matcher(request_body);
+            while (m2.find()) {
+                String json_e_str = m2.group(3).replace("\"", "");
+                String json_real_key = m2.group(2);
+                String json_group_3 = m2.group(3);
+                String json_key1 = m2.group(2) + m2.group(3);
+                String json_real_value = m2.group(5);
+                String json_value1 = m2.group(5);
+                // print(json_value1);
+                if (Pattern.matches(paramWhitelistText, json_real_key)) {
+                    continue;
+                }
+                String old_para = json_key1 + ":" + json_real_value;
+                String new_para1 = "";
+                String new_para2 = "";
+                if (isNumericZidai(json_real_value)) {
+                    new_para1 = json_key1 + ":"+ json_group_3 +json_real_value + "-a"+json_group_3;
+                    new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "-0"+json_group_3;
+                    String new_request_body1 = request_body.replace(old_para, new_para1);
+                    if(is_urlencode){
+                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                    }
+                    HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
+                    HttpRequestResponse response1 = sendrequest(request1);
+                    String response1_body = response1.response().bodyToString();
+                    double json_similarity1 = similar.lengthRatio(response_body, response1_body);
+                    if (json_similarity1 > 0.08) {
+                        String new_request_body2 = request_body.replace(old_para, new_para2);
+                        if(is_urlencode){
+                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                        }
+                        HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
+                        HttpRequestResponse response2 = sendrequest(request2);
+                        String response2_body = response2.response().bodyToString();
+                        double json_similarity = similar.lengthRatio(response1_body, response2_body);
+                        if (json_similarity > 0.08) {
+                            List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                            requestResponseList
+                                    .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
+                            requestResponseList.add(
+                                    HttpRequestResponse.httpRequestResponse(request2, response2.response()));
+                            auditIssueList.add(
+                                    auditIssue(
+                                            "SQL!",
+                                            json_real_key,
+                                            null,
+                                            baseRequestResponse.request().url(),
+                                            AuditIssueSeverity.HIGH,
+                                            AuditIssueConfidence.CERTAIN,
+                                            null,
+                                            null,
+                                            AuditIssueSeverity.HIGH,
+                                            requestResponseList));
 
+                        }
+
+                    }
+                }
+                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + "'" + json_e_str + json_e_str + "\\\""+json_group_3;
+                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "''" + json_e_str + json_e_str + "\\\"" + json_e_str
+                        + json_e_str + "\\\""+json_group_3;
+                String new_request_body1 = request_body.replace(old_para, new_para1);
+                if(is_urlencode){
+                    new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                }
+                HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
+                HttpRequestResponse response1 = sendrequest(request1);
+                String response1_body = response1.response().bodyToString();
+                double json_similarity1 = similar.lengthRatio(response_body, response1_body);
+                if (json_similarity1 > 0.08) {
+                    String new_request_body2 = request_body.replace(old_para, new_para2);
+                    if(is_urlencode){
+                        new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                    }
+                    HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
+                    HttpRequestResponse response2 = sendrequest(request2);
+                    String response2_body = response2.response().bodyToString();
+                    double json_similarity = similar.lengthRatio(response1_body, response2_body);
+                    if (json_similarity > 0.08) {
+                        List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                        requestResponseList
+                                .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
+                        requestResponseList.add(
+                                HttpRequestResponse.httpRequestResponse(request2, response2.response()));
+                        auditIssueList.add(
+                                auditIssue(
+                                        "SQL!",
+                                        json_real_key,
+                                        null,
+                                        baseRequestResponse.request().url(),
+                                        AuditIssueSeverity.HIGH,
+                                        AuditIssueConfidence.CERTAIN,
+                                        null,
+                                        null,
+                                        AuditIssueSeverity.HIGH,
+                                        requestResponseList));
+
+                    }
+
+                }
+                String order_by_para1 = json_key1 + ":" +json_group_3+ json_value1 + ",aaaa"+json_group_3;
+                String order_by_para2 = json_key1 + ":" +json_group_3+ json_value1 + ",true"+json_group_3;
+                String order_by_request_body1 = request_body.replace(old_para, order_by_para1);
+                if(is_urlencode){
+                    order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D","=").replace("%26","&");
+                }
+                HttpRequest order_by_request1 = baseRequestResponse.request().withBody(order_by_request_body1);
+                HttpRequestResponse order_by_response1 = sendrequest(order_by_request1);
+                String order_by_response1_body = order_by_response1.response().bodyToString();
+                double order_by_json_similarity1 = similar.lengthRatio(response_body, order_by_response1_body);
+                if (order_by_json_similarity1 > 0.08) {
+                    String order_by_request_body2 = request_body.replace(old_para, order_by_para2);
+                    if(is_urlencode){
+                        order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D","=").replace("%26","&");
+                    }
+                    HttpRequest order_by_request2 = baseRequestResponse.request().withBody(order_by_request_body2);
+                    HttpRequestResponse order_by_response2 = sendrequest(order_by_request2);
+                    String order_by_response2_body = order_by_response2.response().bodyToString();
+                    double json_similarity = similar.lengthRatio(order_by_response1_body, order_by_response2_body);
+                    if (json_similarity > 0.08) {
+                        List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                        requestResponseList
+                                .add(HttpRequestResponse.httpRequestResponse(order_by_request1,
+                                        order_by_response1.response()));
+                        requestResponseList.add(
+                                HttpRequestResponse.httpRequestResponse(order_by_request2,
+                                        order_by_response2.response()));
+                        auditIssueList.add(
+                                auditIssue(
+                                        "SQL!",
+                                        json_real_key,
+                                        null,
+                                        baseRequestResponse.request().url(),
+                                        AuditIssueSeverity.HIGH,
+                                        AuditIssueConfidence.CERTAIN,
+                                        null,
+                                        null,
+                                        AuditIssueSeverity.HIGH,
+                                        requestResponseList));
+
+                    }
+
+                }
+        
+
+                
             }
 
         }
