@@ -249,7 +249,7 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-                updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + ",aaaa",
+                updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + ",0",
                         parameter.type());
                 checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 checkRequestResponse = sendrequest(checkRequest);
@@ -257,7 +257,7 @@ class MyScanCheck implements ScanCheck {
                 similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
-                            parameter_value + ",true",
+                            parameter_value + ",1",
                             parameter.type());
                     HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
                     HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
@@ -407,7 +407,7 @@ class MyScanCheck implements ScanCheck {
                     }
 
                     String order_by_json_list = json_list.replace(real_list_value,
-                            list_value.replace(json_value, json_value + ",aaaa"));
+                            list_value.replace(json_value, json_value + ",0"));
                     String order_by_request_body = request_body.replace(json_list, order_by_json_list);
                     if(is_urlencode){
                         order_by_request_body = URLEncoder.encode(order_by_request_body).replace("%3D","=").replace("%26","&");
@@ -418,7 +418,7 @@ class MyScanCheck implements ScanCheck {
                     double order_by_similarity1 = similar.lengthRatio(response_body, order_by_response_body1);
                     if (order_by_similarity1 > 0.08) {
                         String order_by_json_list2 = json_list.replace(real_list_value,
-                                list_value.replace(json_value, json_value + ",true"));
+                                list_value.replace(json_value, json_value + ",1"));
                         String order_by_request_body2 = request_body.replace(json_list, order_by_json_list2);
                         if(is_urlencode){
                             order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D","=").replace("%26","&");
@@ -558,8 +558,8 @@ class MyScanCheck implements ScanCheck {
                         }
 
                     }
-                    String order_by_para1 = json_key1 + ":" + json_value1 + ",aaaa";
-                    String order_by_para2 = json_key1 + ":" + json_value1 + ",true";
+                    String order_by_para1 = json_key1 + ":" + json_value1 + ",0";
+                    String order_by_para2 = json_key1 + ":" + json_value1 + ",1";
                     String order_by_request_body1 = request_body.replace(old_para, order_by_para1);
                     if(is_urlencode){
                         order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D","=").replace("%26","&");
@@ -709,8 +709,8 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-                String order_by_para1 = json_key1 + ":" +json_group_3+ json_value1 + ",aaaa"+json_group_3;
-                String order_by_para2 = json_key1 + ":" +json_group_3+ json_value1 + ",true"+json_group_3;
+                String order_by_para1 = json_key1 + ":" +json_group_3+ json_value1 + ",0"+json_group_3;
+                String order_by_para2 = json_key1 + ":" +json_group_3+ json_value1 + ",1"+json_group_3;
                 String order_by_request_body1 = request_body.replace(old_para, order_by_para1);
                 if(is_urlencode){
                     order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D","=").replace("%26","&");
