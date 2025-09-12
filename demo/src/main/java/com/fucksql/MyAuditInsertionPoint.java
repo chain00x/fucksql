@@ -213,7 +213,7 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + "%27%22",
+                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + "%27",
                         parameter.type());
                 HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
@@ -221,7 +221,7 @@ class MyScanCheck implements ScanCheck {
                 double similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
-                            parameter_value + "%27%27%22%22",
+                            parameter_value + "%27and%281%29%3d%271",
                             parameter.type());
                     HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
                     HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
@@ -254,6 +254,7 @@ class MyScanCheck implements ScanCheck {
                 checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 checkRequestResponse = sendrequest(checkRequest);
                 response_body1 = checkRequestResponse.response().bodyToString();
+                //order by
                 similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
@@ -316,6 +317,7 @@ class MyScanCheck implements ScanCheck {
                         continue;
                     }
                     // value为空时的处理
+                    // print(list_value);
                     if (list_value.equals(e_str + e_str)) {
                         list_value = e_str + "1" + e_str;
                     }
@@ -363,7 +365,7 @@ class MyScanCheck implements ScanCheck {
                     }
                     String new_json_list = json_list.replace(real_list_value,
                             list_value.replace(json_value,
-                                    json_value + "'" + e_str.replace("\"", "") + e_str.replace("\"", "") + "\\\""));
+                                    json_value + "'"));
                     String new_request_body = request_body.replace(json_list, new_json_list);
                     if(is_urlencode){
                             new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
@@ -375,8 +377,7 @@ class MyScanCheck implements ScanCheck {
                     if (similarity1 > 0.08) {
                         String new_json_list2 = json_list.replace(real_list_value,
                                 list_value.replace(json_value,
-                                        json_value + "''" + e_str.replace("\"", "") + e_str.replace("\"", "") + "\\\""
-                                                + e_str.replace("\"", "") + e_str.replace("\"", "") + "\\\""));
+                                        json_value + "'and(1)='1"));
                         String new_request_body2 = request_body.replace(json_list, new_json_list2);
                         if(is_urlencode){
                             new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
@@ -516,9 +517,8 @@ class MyScanCheck implements ScanCheck {
 
                         }
                     }
-                    new_para1 = json_key1 + ":" + json_value1 + "'" + json_e_str + json_e_str + "\\\"";
-                    new_para2 = json_key1 + ":" + json_value1 + "''" + json_e_str + json_e_str + "\\\"" + json_e_str
-                            + json_e_str + "\\\"";
+                    new_para1 = json_key1 + ":" + json_value1 + "'";
+                    new_para2 = json_key1 + ":" + json_value1 + "'and(1)='1";
                     String new_request_body1 = request_body.replace(old_para, new_para1);
                     if(is_urlencode){
                         new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
@@ -605,8 +605,8 @@ class MyScanCheck implements ScanCheck {
 
                 }
             }
-            //处理数字无双引号包裹
-            String pattern2 = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+)";
+            //处理数字无双引号包裹或者null
+            String pattern2 = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+|null)";
             Pattern r2 = Pattern.compile(pattern2);
             // print(request_body);
             Matcher m2 = r2.matcher(request_body);
@@ -617,16 +617,21 @@ class MyScanCheck implements ScanCheck {
                 String json_key1 = m2.group(2) + m2.group(3);
                 String json_real_value = m2.group(5);
                 String json_value1 = m2.group(5);
-                // print(json_value1);
+                // print(json_real_value);
+                if(json_real_value.equals("null")){
+                    json_value1 = "1";
+                }
                 if (Pattern.matches(paramWhitelistText, json_real_key)) {
                     continue;
                 }
                 String old_para = json_key1 + ":" + json_real_value;
                 String new_para1 = "";
                 String new_para2 = "";
-                if (isNumericZidai(json_real_value)) {
-                    new_para1 = json_key1 + ":"+ json_group_3 +json_real_value + "-a"+json_group_3;
+                if (isNumericZidai(json_value1)) {
+                    new_para1 = json_key1 + ":"+ json_group_3 +json_value1 + "-a"+json_group_3;
                     new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "-0"+json_group_3;
+                    // print(old_para);
+                    // print(new_para1);
                     String new_request_body1 = request_body.replace(old_para, new_para1);
                     if(is_urlencode){
                         new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
@@ -667,9 +672,8 @@ class MyScanCheck implements ScanCheck {
 
                     }
                 }
-                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + "'" + json_e_str + json_e_str + "\\\""+json_group_3;
-                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "''" + json_e_str + json_e_str + "\\\"" + json_e_str
-                        + json_e_str + "\\\""+json_group_3;
+                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + "'" +json_e_str +"\"";
+                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "'and(1)='1" +json_e_str +"\"";
                 String new_request_body1 = request_body.replace(old_para, new_para1);
                 if(is_urlencode){
                     new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
