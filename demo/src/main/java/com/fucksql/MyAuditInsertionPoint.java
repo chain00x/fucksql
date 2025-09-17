@@ -102,12 +102,8 @@ class MyScanCheck implements ScanCheck {
         List<AuditIssue> auditIssueList = new ArrayList<>();
         // 每次执行扫描时，直接从UI获取最新的payload列表
         List<String[]> payloadList = customPanel.getPayloadList();
-        print("Payload列表大小: " + payloadList.size());
-        payloadList.forEach(payload -> {
-            String Payload1=payload[0];
-            String Payload2=payload[1];
             if(baseRequestResponse.request().method().equals("OPTIONS")){
-            return;
+            return auditResult();
         }
         List<ParsedHttpParameter> parameters = baseRequestResponse.request().parameters();
         String request_body = baseRequestResponse.request().bodyToString();
@@ -135,9 +131,8 @@ class MyScanCheck implements ScanCheck {
         
         // get or post
         if (EnableProjectFilterCheckBox) {
-            // print("1111111");
             if (!api.scope().isInScope(baseRequestResponse.request().url())) {
-                return;
+                return auditResult();
             }
         }
         List<String> list = asList("myqcloud.com", ".3g2", ".3gp", ".7z", ".aac", ".abw", ".aif", ".aifc", ".aiff",
@@ -159,12 +154,12 @@ class MyScanCheck implements ScanCheck {
                 extension = "."+path.substring(lastDotIndex + 1).toLowerCase();
             }
             if (Pattern.matches(urlWhitelistText, baseRequestResponse.request().url())) {
-                return;
+                return auditResult();
             }
             for (int i = 0; i < list.size(); i++) {
                 String type = list.get(i);
                 if (extension.equals(type) && !request_url.getHost().contains(type)) {
-                    return;
+                    return auditResult();
                 }
             }
         } catch (MalformedURLException e) {
@@ -220,49 +215,53 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + URLEncoder.encode(Payload1),
+                // 只在Payload1和Payload2的检测位置应用payload列表循环
+                for (String[] payload : payloadList) {
+                    String Payload1 = payload[0];
+                    String Payload2 = payload[1];
+                    
+                    HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + URLEncoder.encode(Payload1),
+                            parameter.type());
+                    HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
+                    HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
+                    String response_body1 = checkRequestResponse.response().bodyToString();
+                    double similarity1 = similar.lengthRatio(response_body, response_body1);
+                    if (similarity1 > 0.08) {
+                        HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
+                                parameter_value + URLEncoder.encode(Payload2),
+                                parameter.type());
+                        HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
+                        HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
+                        String response_body2 = checkRequestResponse2.response().bodyToString();
+                        double similarity = similar.lengthRatio(response_body1, response_body2);
+                        if (similarity > 0.08) {
+                            List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                            requestResponseList.add(
+                                    HttpRequestResponse.httpRequestResponse(checkRequest, checkRequestResponse.response()));
+                            requestResponseList.add(HttpRequestResponse.httpRequestResponse(checkRequest2,
+                                    checkRequestResponse2.response()));
+                            auditIssueList.add(
+                                    auditIssue(
+                                            "SQL!",
+                                            parameter.name(),
+                                            null,
+                                            baseRequestResponse.request().url(),
+                                            AuditIssueSeverity.HIGH,
+                                            AuditIssueConfidence.CERTAIN,
+                                            null,
+                                            null,
+                                            AuditIssueSeverity.HIGH,
+                                            requestResponseList));
+                        }
+                    }
+                }
+                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + ",0",
                         parameter.type());
                 HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
                 String response_body1 = checkRequestResponse.response().bodyToString();
-                double similarity1 = similar.lengthRatio(response_body, response_body1);
-                if (similarity1 > 0.08) {
-                    HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
-                            parameter_value + URLEncoder.encode(Payload2),
-                            parameter.type());
-                    HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
-                    HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
-                    String response_body2 = checkRequestResponse2.response().bodyToString();
-                    double similarity = similar.lengthRatio(response_body1, response_body2);
-                    if (similarity > 0.08) {
-                        List<HttpRequestResponse> requestResponseList = new ArrayList<>();
-                        requestResponseList.add(
-                                HttpRequestResponse.httpRequestResponse(checkRequest, checkRequestResponse.response()));
-                        requestResponseList.add(HttpRequestResponse.httpRequestResponse(checkRequest2,
-                                checkRequestResponse2.response()));
-                        auditIssueList.add(
-                                auditIssue(
-                                        "SQL!",
-                                        parameter.name(),
-                                        null,
-                                        baseRequestResponse.request().url(),
-                                        AuditIssueSeverity.HIGH,
-                                        AuditIssueConfidence.CERTAIN,
-                                        null,
-                                        null,
-                                        AuditIssueSeverity.HIGH,
-                                        requestResponseList));
-
-                    }
-
-                }
-                updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + ",0",
-                        parameter.type());
-                checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
-                checkRequestResponse = sendrequest(checkRequest);
-                response_body1 = checkRequestResponse.response().bodyToString();
                 //order by
-                similarity1 = similar.lengthRatio(response_body, response_body1);
+                double similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
                             parameter_value + ",1",
@@ -370,47 +369,54 @@ class MyScanCheck implements ScanCheck {
                         }
 
                     }
-                    String new_json_list = json_list.replace(real_list_value,
-                            list_value.replace(json_value,
-                                    json_value + Payload1));
-                    String new_request_body = request_body.replace(json_list, new_json_list);
-                    if(is_urlencode){
-                            new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
-                        }
-                    HttpRequest new_request = baseRequestResponse.request().withBody(new_request_body);
-                    HttpRequestResponse new_response = sendrequest(new_request);
-                    String response_body1 = new_response.response().bodyToString();
-                    double similarity1 = similar.lengthRatio(response_body, response_body1);
-                    if (similarity1 > 0.08) {
-                        String new_json_list2 = json_list.replace(real_list_value,
+                    // 只在Payload1和Payload2的检测位置应用payload列表循环
+                    String response_body1 = "";
+                    for (String[] payload : payloadList) {
+                        String Payload1 = payload[0];
+                        String Payload2 = payload[1];
+                        
+                        String new_json_list = json_list.replace(real_list_value,
                                 list_value.replace(json_value,
-                                        json_value + Payload2));
-                        String new_request_body2 = request_body.replace(json_list, new_json_list2);
+                                        json_value + Payload1));
+                        String new_request_body = request_body.replace(json_list, new_json_list);
                         if(is_urlencode){
-                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
-                        }
-                        HttpRequest new_request2 = baseRequestResponse.request().withBody(new_request_body2);
-                        HttpRequestResponse new_response2 = sendrequest(new_request2);
-                        String response_body2 = new_response2.response().bodyToString();
-                        double similarity = similar.lengthRatio(response_body1, response_body2);
-                        if (similarity > 0.08) {
-                            List<HttpRequestResponse> requestResponseList = new ArrayList<>();
-                            requestResponseList
-                                    .add(HttpRequestResponse.httpRequestResponse(new_request, new_response.response()));
-                            requestResponseList.add(
-                                    HttpRequestResponse.httpRequestResponse(new_request2, new_response2.response()));
-                            auditIssueList.add(
-                                    auditIssue(
-                                            "SQL!",
-                                            json_key,
-                                            null,
-                                            baseRequestResponse.request().url(),
-                                            AuditIssueSeverity.HIGH,
-                                            AuditIssueConfidence.CERTAIN,
-                                            null,
-                                            null,
-                                            AuditIssueSeverity.HIGH,
-                                            requestResponseList));
+                                new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
+                            }
+                        HttpRequest new_request = baseRequestResponse.request().withBody(new_request_body);
+                        HttpRequestResponse new_response = sendrequest(new_request);
+                        response_body1 = new_response.response().bodyToString();
+                        double similarity1 = similar.lengthRatio(response_body, response_body1);
+                        if (similarity1 > 0.08) {
+                            String new_json_list2 = json_list.replace(real_list_value,
+                                    list_value.replace(json_value,
+                                            json_value + Payload2));
+                            String new_request_body2 = request_body.replace(json_list, new_json_list2);
+                            if(is_urlencode){
+                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            }
+                            HttpRequest new_request2 = baseRequestResponse.request().withBody(new_request_body2);
+                            HttpRequestResponse new_response2 = sendrequest(new_request2);
+                            String response_body2 = new_response2.response().bodyToString();
+                            double similarity = similar.lengthRatio(response_body1, response_body2);
+                            if (similarity > 0.08) {
+                                List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                                requestResponseList
+                                        .add(HttpRequestResponse.httpRequestResponse(new_request, new_response.response()));
+                                requestResponseList.add(
+                                        HttpRequestResponse.httpRequestResponse(new_request2, new_response2.response()));
+                                auditIssueList.add(
+                                        auditIssue(
+                                                "SQL!",
+                                                json_key,
+                                                null,
+                                                baseRequestResponse.request().url(),
+                                                AuditIssueSeverity.HIGH,
+                                                AuditIssueConfidence.CERTAIN,
+                                                null,
+                                                null,
+                                                AuditIssueSeverity.HIGH,
+                                                requestResponseList));
+                            }
                         }
                     }
 
@@ -524,46 +530,50 @@ class MyScanCheck implements ScanCheck {
 
                         }
                     }
-                    new_para1 = json_key1 + ":" + json_value1 + Payload1;
-                    new_para2 = json_key1 + ":" + json_value1 + Payload2;
-                    String new_request_body1 = request_body.replace(old_para, new_para1);
-                    if(is_urlencode){
-                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
-                    }
-                    HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
-                    HttpRequestResponse response1 = sendrequest(request1);
-                    String response1_body = response1.response().bodyToString();
-                    double json_similarity1 = similar.lengthRatio(response_body, response1_body);
-                    if (json_similarity1 > 0.08) {
-                        String new_request_body2 = request_body.replace(old_para, new_para2);
+                    // 只在Payload1和Payload2的检测位置应用payload列表循环
+                    for (String[] payload : payloadList) {
+                        String Payload1 = payload[0];
+                        String Payload2 = payload[1];
+                        
+                        new_para1 = json_key1 + ":" + json_value1 + Payload1;
+                        new_para2 = json_key1 + ":" + json_value1 + Payload2;
+                        String new_request_body1 = request_body.replace(old_para, new_para1);
                         if(is_urlencode){
-                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
                         }
-                        HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
-                        HttpRequestResponse response2 = sendrequest(request2);
-                        String response2_body = response2.response().bodyToString();
-                        double json_similarity = similar.lengthRatio(response1_body, response2_body);
-                        if (json_similarity > 0.08) {
-                            List<HttpRequestResponse> requestResponseList = new ArrayList<>();
-                            requestResponseList
-                                    .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
-                            requestResponseList.add(
-                                    HttpRequestResponse.httpRequestResponse(request2, response2.response()));
-                            auditIssueList.add(
-                                    auditIssue(
-                                            "SQL!",
-                                            json_real_key,
-                                            null,
-                                            baseRequestResponse.request().url(),
-                                            AuditIssueSeverity.HIGH,
-                                            AuditIssueConfidence.CERTAIN,
-                                            null,
-                                            null,
-                                            AuditIssueSeverity.HIGH,
-                                            requestResponseList));
-
+                        HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
+                        HttpRequestResponse response1 = sendrequest(request1);
+                        String response1_body = response1.response().bodyToString();
+                        double json_similarity1 = similar.lengthRatio(response_body, response1_body);
+                        if (json_similarity1 > 0.08) {
+                            String new_request_body2 = request_body.replace(old_para, new_para2);
+                            if(is_urlencode){
+                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            }
+                            HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
+                            HttpRequestResponse response2 = sendrequest(request2);
+                            String response2_body = response2.response().bodyToString();
+                            double json_similarity = similar.lengthRatio(response1_body, response2_body);
+                            if (json_similarity > 0.08) {
+                                List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                                requestResponseList
+                                        .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
+                                requestResponseList.add(
+                                        HttpRequestResponse.httpRequestResponse(request2, response2.response()));
+                                auditIssueList.add(
+                                        auditIssue(
+                                                "SQL!",
+                                                json_real_key,
+                                                null,
+                                                baseRequestResponse.request().url(),
+                                                AuditIssueSeverity.HIGH,
+                                                AuditIssueConfidence.CERTAIN,
+                                                null,
+                                                null,
+                                                AuditIssueSeverity.HIGH,
+                                                requestResponseList));
+                            }
                         }
-
                     }
                     String order_by_para1 = json_key1 + ":" + json_value1 + ",0";
                     String order_by_para2 = json_key1 + ":" + json_value1 + ",1";
@@ -679,46 +689,50 @@ class MyScanCheck implements ScanCheck {
 
                     }
                 }
-                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + Payload1 +json_e_str +"\"";
-                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + Payload2 +json_e_str +"\"";
-                String new_request_body1 = request_body.replace(old_para, new_para1);
-                if(is_urlencode){
-                    new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
-                }
-                HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
-                HttpRequestResponse response1 = sendrequest(request1);
-                String response1_body = response1.response().bodyToString();
-                double json_similarity1 = similar.lengthRatio(response_body, response1_body);
-                if (json_similarity1 > 0.08) {
-                    String new_request_body2 = request_body.replace(old_para, new_para2);
+                // 只在Payload1和Payload2的检测位置应用payload列表循环
+                for (String[] payload : payloadList) {
+                    String Payload1 = payload[0];
+                    String Payload2 = payload[1];
+                    
+                    new_para1 = json_key1 + ":"+json_group_3 + json_value1 + Payload1 +json_e_str +"\"";
+                    new_para2 = json_key1 + ":"+json_group_3 + json_value1 + Payload2 +json_e_str +"\"";
+                    String new_request_body1 = request_body.replace(old_para, new_para1);
                     if(is_urlencode){
-                        new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
                     }
-                    HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
-                    HttpRequestResponse response2 = sendrequest(request2);
-                    String response2_body = response2.response().bodyToString();
-                    double json_similarity = similar.lengthRatio(response1_body, response2_body);
-                    if (json_similarity > 0.08) {
-                        List<HttpRequestResponse> requestResponseList = new ArrayList<>();
-                        requestResponseList
-                                .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
-                        requestResponseList.add(
-                                HttpRequestResponse.httpRequestResponse(request2, response2.response()));
-                        auditIssueList.add(
-                                auditIssue(
-                                        "SQL!",
-                                        json_real_key,
-                                        null,
-                                        baseRequestResponse.request().url(),
-                                        AuditIssueSeverity.HIGH,
-                                        AuditIssueConfidence.CERTAIN,
-                                        null,
-                                        null,
-                                        AuditIssueSeverity.HIGH,
-                                        requestResponseList));
-
+                    HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
+                    HttpRequestResponse response1 = sendrequest(request1);
+                    String response1_body = response1.response().bodyToString();
+                    double json_similarity1 = similar.lengthRatio(response_body, response1_body);
+                    if (json_similarity1 > 0.08) {
+                        String new_request_body2 = request_body.replace(old_para, new_para2);
+                        if(is_urlencode){
+                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                        }
+                        HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
+                        HttpRequestResponse response2 = sendrequest(request2);
+                        String response2_body = response2.response().bodyToString();
+                        double json_similarity = similar.lengthRatio(response1_body, response2_body);
+                        if (json_similarity > 0.08) {
+                            List<HttpRequestResponse> requestResponseList = new ArrayList<>();
+                            requestResponseList
+                                    .add(HttpRequestResponse.httpRequestResponse(request1, response1.response()));
+                            requestResponseList.add(
+                                    HttpRequestResponse.httpRequestResponse(request2, response2.response()));
+                            auditIssueList.add(
+                                    auditIssue(
+                                            "SQL!",
+                                            json_real_key,
+                                            null,
+                                            baseRequestResponse.request().url(),
+                                            AuditIssueSeverity.HIGH,
+                                            AuditIssueConfidence.CERTAIN,
+                                            null,
+                                            null,
+                                            AuditIssueSeverity.HIGH,
+                                            requestResponseList));
+                        }
                     }
-
                 }
                 String order_by_para1 = json_key1 + ":" +json_group_3+ json_value1 + ",0"+json_group_3;
                 String order_by_para2 = json_key1 + ":" +json_group_3+ json_value1 + ",1"+json_group_3;
@@ -769,7 +783,6 @@ class MyScanCheck implements ScanCheck {
             }
 
         }
-        });
         
         try{
             return auditResult(auditIssueList);
