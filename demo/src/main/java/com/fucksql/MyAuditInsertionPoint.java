@@ -45,18 +45,20 @@ class MyScanCheck implements ScanCheck {
     private String urlWhitelistText = "";
     private String paramWhitelistText = "";
     boolean EnableProjectFilterCheckBox = true;
+    // 保存CustomPanel实例引用
+    private CustomPanel customPanel;
 
     MyScanCheck(MontoyaApi api) {
         this.api = api;
-        CustomPanel CustomPanel = new CustomPanel();
-        api.userInterface().registerSuiteTab("SQL config", CustomPanel);
-        CustomPanel.getConfirmButton().addActionListener(new ActionListener() {
+        this.customPanel = new CustomPanel();
+        api.userInterface().registerSuiteTab("SQL config", customPanel);
+        customPanel.getConfirmButton().addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                sleep_time = CustomPanel.getPacketDelayField().getText();
-                urlWhitelistText = CustomPanel.getUrlWhitelistArea().getText();
-                paramWhitelistText = CustomPanel.getParamWhitelistArea().getText();
-                EnableProjectFilterCheckBox = CustomPanel.getEnableProjectFilterCheckBox().isSelected();
+                sleep_time = customPanel.getPacketDelayField().getText();
+                urlWhitelistText = customPanel.getUrlWhitelistArea().getText();
+                paramWhitelistText = customPanel.getParamWhitelistArea().getText();
+                EnableProjectFilterCheckBox = customPanel.getEnableProjectFilterCheckBox().isSelected();
             }
         });
     }
@@ -97,11 +99,16 @@ class MyScanCheck implements ScanCheck {
 
     @Override
     public AuditResult passiveAudit(HttpRequestResponse baseRequestResponse) {
-        // print("1111111");
-        if(baseRequestResponse.request().method().equals("OPTIONS")){
-            return auditResult();
-        }
         List<AuditIssue> auditIssueList = new ArrayList<>();
+        // 每次执行扫描时，直接从UI获取最新的payload列表
+        List<String[]> payloadList = customPanel.getPayloadList();
+        print("Payload列表大小: " + payloadList.size());
+        payloadList.forEach(payload -> {
+            String Payload1=payload[0];
+            String Payload2=payload[1];
+            if(baseRequestResponse.request().method().equals("OPTIONS")){
+            return;
+        }
         List<ParsedHttpParameter> parameters = baseRequestResponse.request().parameters();
         String request_body = baseRequestResponse.request().bodyToString();
         String response_body = baseRequestResponse.response().bodyToString();
@@ -130,7 +137,7 @@ class MyScanCheck implements ScanCheck {
         if (EnableProjectFilterCheckBox) {
             // print("1111111");
             if (!api.scope().isInScope(baseRequestResponse.request().url())) {
-                return auditResult();
+                return;
             }
         }
         List<String> list = asList("myqcloud.com", ".3g2", ".3gp", ".7z", ".aac", ".abw", ".aif", ".aifc", ".aiff",
@@ -152,12 +159,12 @@ class MyScanCheck implements ScanCheck {
                 extension = "."+path.substring(lastDotIndex + 1).toLowerCase();
             }
             if (Pattern.matches(urlWhitelistText, baseRequestResponse.request().url())) {
-                return auditResult();
+                return;
             }
             for (int i = 0; i < list.size(); i++) {
                 String type = list.get(i);
                 if (extension.equals(type) && !request_url.getHost().contains(type)) {
-                    return auditResult();
+                    return;
                 }
             }
         } catch (MalformedURLException e) {
@@ -213,7 +220,7 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + "%27",
+                HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + URLEncoder.encode(Payload1),
                         parameter.type());
                 HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
@@ -221,7 +228,7 @@ class MyScanCheck implements ScanCheck {
                 double similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
-                            parameter_value + "%27and%281%29%3d%271",
+                            parameter_value + URLEncoder.encode(Payload2),
                             parameter.type());
                     HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
                     HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
@@ -365,7 +372,7 @@ class MyScanCheck implements ScanCheck {
                     }
                     String new_json_list = json_list.replace(real_list_value,
                             list_value.replace(json_value,
-                                    json_value + "'"));
+                                    json_value + Payload1));
                     String new_request_body = request_body.replace(json_list, new_json_list);
                     if(is_urlencode){
                             new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
@@ -377,7 +384,7 @@ class MyScanCheck implements ScanCheck {
                     if (similarity1 > 0.08) {
                         String new_json_list2 = json_list.replace(real_list_value,
                                 list_value.replace(json_value,
-                                        json_value + "'and(1)='1"));
+                                        json_value + Payload2));
                         String new_request_body2 = request_body.replace(json_list, new_json_list2);
                         if(is_urlencode){
                             new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
@@ -517,8 +524,8 @@ class MyScanCheck implements ScanCheck {
 
                         }
                     }
-                    new_para1 = json_key1 + ":" + json_value1 + "'";
-                    new_para2 = json_key1 + ":" + json_value1 + "'and(1)='1";
+                    new_para1 = json_key1 + ":" + json_value1 + Payload1;
+                    new_para2 = json_key1 + ":" + json_value1 + Payload2;
                     String new_request_body1 = request_body.replace(old_para, new_para1);
                     if(is_urlencode){
                         new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
@@ -672,8 +679,8 @@ class MyScanCheck implements ScanCheck {
 
                     }
                 }
-                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + "'" +json_e_str +"\"";
-                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "'and(1)='1" +json_e_str +"\"";
+                new_para1 = json_key1 + ":"+json_group_3 + json_value1 + Payload1 +json_e_str +"\"";
+                new_para2 = json_key1 + ":"+json_group_3 + json_value1 + Payload2 +json_e_str +"\"";
                 String new_request_body1 = request_body.replace(old_para, new_para1);
                 if(is_urlencode){
                     new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
@@ -762,8 +769,14 @@ class MyScanCheck implements ScanCheck {
             }
 
         }
-
-        return auditResult(auditIssueList);
+        });
+        
+        try{
+            return auditResult(auditIssueList);
+        }catch (Exception e){
+            e.printStackTrace();
+            return auditResult();
+        }
     }
 
     @Override
