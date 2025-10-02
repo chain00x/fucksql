@@ -25,6 +25,9 @@ public class CustomPanel extends JPanel {
 
         // 初始化payload列表
         payloadList = new ArrayList<>();
+        // 设置默认payload值
+        String[] defaultPayload = {"'", "''"};
+        payloadList.add(defaultPayload);
 
         // 创建顶部面板（原有功能）
         JPanel topPanel = createTopPanel();
@@ -104,6 +107,14 @@ public class CustomPanel extends JPanel {
 
         // 创建表格
         payloadTable = new JTable(tableModel);
+        
+        // 如果有默认payload，添加到表格模型
+        if (!payloadList.isEmpty()) {
+            for (String[] payload : payloadList) {
+                tableModel.addRow(new Object[]{payload[0], payload[1]});
+            }
+        }
+        
         JScrollPane scrollPane = new JScrollPane(payloadTable);
         panel.add(scrollPane, BorderLayout.CENTER);
 

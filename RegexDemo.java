@@ -3,8 +3,8 @@ import java.util.regex.Pattern;
 
 public class RegexDemo {
     public static void main(String[] args) {
-        String input = "{\"productCode\":\"AD8909\",\"type\":null,\"thirdSession\":\"8wPtr4XBB0A8000001367968173\"}";
-        String pattern = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+|null)"; // 匹配一个或多个数字
+        String input = "{\"a\":{\"b\":\"\",\"d\":[1]}}";
+        String pattern = "(\"|\\\\\")(\\S+?)(\"|\\\\\"):(\"|\\\\\")(?!\\{)(.*?)(\"|\\\\\")"; // 匹配一个或多个数字
 
         // 创建Pattern对象
         Pattern regex = Pattern.compile(pattern);
@@ -13,12 +13,9 @@ public class RegexDemo {
         Matcher matcher = regex.matcher(input);
 
         // 查找匹配
-        if (matcher.find()) {
-            String match = matcher.group(); // 获取匹配到的字符串
-            System.out.println("匹配到的结果: " + matcher.group(3).replace("\"", ""));
+        while (matcher.find()) {
+            System.out.println("匹配到的结果: " + matcher.group(4) + matcher.group(5));
             
-        } else {
-            System.out.println("未找到匹配项");
         }
     }
 }
