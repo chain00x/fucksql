@@ -17,34 +17,50 @@ import burp.api.montoya.http.message.params.HttpParameter;
 import burp.api.montoya.http.message.params.ParsedHttpParameter;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.logging.Logging;
+import burp.api.montoya.scanner.AuditConfiguration;
 import burp.api.montoya.scanner.AuditResult;
+import burp.api.montoya.scanner.BuiltInAuditConfiguration;
 import burp.api.montoya.scanner.ConsolidationAction;
 import burp.api.montoya.scanner.ScanCheck;
+import burp.api.montoya.scanner.audit.Audit;
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint;
 import burp.api.montoya.scanner.audit.issues.AuditIssue;
 import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence;
 import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
+import burp.api.montoya.scanner.scancheck.PassiveScanCheck;
+import burp.api.montoya.scanner.scancheck.ScanCheckType;
+import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
+import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
+import burp.api.montoya.scanner.audit.issues.AuditIssueDefinition;
+import burp.api.montoya.internal.ObjectFactoryLocator;
+import burp.api.montoya.core.ToolType;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import javax.swing.JMenuItem;
+import java.awt.Component;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.util.Collections;
 
 import static burp.api.montoya.scanner.AuditResult.auditResult;
 import static burp.api.montoya.scanner.ConsolidationAction.KEEP_BOTH;
 import static burp.api.montoya.scanner.ConsolidationAction.KEEP_EXISTING;
 import static burp.api.montoya.scanner.audit.issues.AuditIssue.auditIssue;
 
-class MyScanCheck implements ScanCheck {
+class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanCheck {
     StringSimilarity similar = new StringSimilarity();
     private final MontoyaApi api;
-    private String sleep_time;
-    private String urlWhitelistText = "";
-    private String paramWhitelistText = "";
-    boolean EnableProjectFilterCheckBox = true;
+    private int packetDelay = 0;
+    private String scanHostsText = "";
+    private String excludeParamsText = "";
+    boolean projectFilterEnabled = true;
+    boolean passiveScanEnabled = false; // 被动扫描开关状态，默认关闭
+    boolean hostFilterEnabled = false; // host列表过滤开关状态，默认关闭
+    boolean paramExclusionEnabled = true; // 参数排除开关状态，默认开启
     // 保存CustomPanel实例引用
     private CustomPanel customPanel;
 
@@ -55,10 +71,13 @@ class MyScanCheck implements ScanCheck {
         customPanel.getConfirmButton().addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                sleep_time = customPanel.getPacketDelayField().getText();
-                urlWhitelistText = customPanel.getUrlWhitelistArea().getText();
-                paramWhitelistText = customPanel.getParamWhitelistArea().getText();
-                EnableProjectFilterCheckBox = customPanel.getEnableProjectFilterCheckBox().isSelected();
+                packetDelay = customPanel.getPacketDelay();
+                scanHostsText = customPanel.getScanHostsText();
+                excludeParamsText = customPanel.getExcludeParamsText();
+                projectFilterEnabled = customPanel.isProjectFilterEnabled();
+                passiveScanEnabled = customPanel.isPassiveScanEnabled(); // 获取被动扫描开关状态
+                hostFilterEnabled = customPanel.isHostFilterEnabled(); // 获取host列表过滤开关状态
+                paramExclusionEnabled = customPanel.isParamExclusionEnabled(); // 获取参数排除开关状态
             }
         });
     }
@@ -83,13 +102,10 @@ class MyScanCheck implements ScanCheck {
     }
 
     public HttpRequestResponse sendrequest(HttpRequest request) {
-        if (sleep_time != null && !sleep_time.trim().isEmpty()) {
+        if (packetDelay > 0) {
             try {
-                double sleepTimeValue = Double.parseDouble(sleep_time);
-                if (sleepTimeValue > 0) {
-                    Thread.sleep((int) (sleepTimeValue * 1000));
-                }
-            } catch (NumberFormatException | InterruptedException e) {
+                Thread.sleep(packetDelay);
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
@@ -99,10 +115,17 @@ class MyScanCheck implements ScanCheck {
 
     @Override
     public AuditResult passiveAudit(HttpRequestResponse baseRequestResponse) {
+        // 检查被动扫描是否启用，如果未启用则直接返回
+        if (!passiveScanEnabled) {
+            return auditResult();
+        }
+
         List<AuditIssue> auditIssueList = new ArrayList<>();
         // 每次执行扫描时，直接从UI获取最新的payload列表
         List<String[]> payloadList = customPanel.getPayloadList();
-            if(baseRequestResponse.request().method().equals("OPTIONS")){
+
+        // 跳过OPTIONS方法
+        if (baseRequestResponse.request().method().equals("OPTIONS")) {
             return auditResult();
         }
         List<ParsedHttpParameter> parameters = baseRequestResponse.request().parameters();
@@ -128,11 +151,32 @@ class MyScanCheck implements ScanCheck {
                 break;
             }
         }
-        
-        // get or post
-        if (EnableProjectFilterCheckBox) {
+
+        // 检查是否启用项目范围过滤
+        if (projectFilterEnabled) {
             if (!api.scope().isInScope(baseRequestResponse.request().url())) {
+                return auditResult(); // URL不在项目范围内，不进行扫描
+            }
+        }
+
+        // 检查URL是否在扫描host列表中（仅当hostFilterEnabled为true时应用）
+        if (hostFilterEnabled && !scanHostsText.isEmpty()) {
+            boolean match = false;
+            try {
+                URL request_url = new URL(baseRequestResponse.request().url());
+                String host = request_url.getHost();
+                for (String pattern : scanHostsText.split("\\n")) {
+                    if (!pattern.trim().isEmpty() && host.matches(pattern.trim())) {
+                        match = true;
+                        break;
+                    }
+                }
+            } catch (MalformedURLException e) {
+                // URL解析错误，跳过此URL
                 return auditResult();
+            }
+            if (!match) {
+                return auditResult(); // URL不在扫描host列表中，不进行扫描
             }
         }
         List<String> list = asList("myqcloud.com", ".3g2", ".3gp", ".7z", ".aac", ".abw", ".aif", ".aifc", ".aiff",
@@ -151,11 +195,9 @@ class MyScanCheck implements ScanCheck {
             String extension = "";
             int lastDotIndex = path.lastIndexOf('.');
             if (lastDotIndex > 0 && lastDotIndex < path.length() - 1) {
-                extension = "."+path.substring(lastDotIndex + 1).toLowerCase();
+                extension = "." + path.substring(lastDotIndex + 1).toLowerCase();
             }
-            if (Pattern.matches(urlWhitelistText, baseRequestResponse.request().url())) {
-                return auditResult();
-            }
+            // 已经在前面处理了扫描host列表的逻辑，这里不再需要URL白名单检查
             for (int i = 0; i < list.size(); i++) {
                 String type = list.get(i);
                 if (extension.equals(type) && !request_url.getHost().contains(type)) {
@@ -168,9 +210,20 @@ class MyScanCheck implements ScanCheck {
 
         for (ParsedHttpParameter parameter : parameters) {
             String parameter_value = parameter.value();
-            if (parameter.type().toString() == "BODY" || parameter.type().toString() == "URL") {
-                if (Pattern.matches(paramWhitelistText, parameter.name())) {
-                    continue;
+            // 修正字符串比较方法，使用equals而不是==
+            if (parameter.type().toString().equals("BODY") || parameter.type().toString().equals("URL")) {
+                // 检查参数是否在排除列表中（仅当paramExclusionEnabled为true时应用）
+                if (paramExclusionEnabled && !excludeParamsText.isEmpty()) {
+                    boolean exclude = false;
+                    for (String excludePattern : excludeParamsText.split("\\n")) {
+                        if (!excludePattern.trim().isEmpty() && parameter.name().matches(excludePattern.trim())) {
+                            exclude = true;
+                            break;
+                        }
+                    }
+                    if (exclude) {
+                        continue;
+                    }
                 }
                 if (parameter_value.equals("")) {
                     parameter_value = "1";
@@ -184,7 +237,7 @@ class MyScanCheck implements ScanCheck {
                     double similarity1 = similar.lengthRatio(response_body, response_body1);
                     if (similarity1 > 0.08) {
                         HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
-                                parameter_value + "-1",
+                                parameter_value + "-0",
                                 parameter.type());
                         HttpRequest checkRequest2 = baseRequestResponse.request()
                                 .withUpdatedParameters(updatedParameter2);
@@ -219,8 +272,9 @@ class MyScanCheck implements ScanCheck {
                 for (String[] payload : payloadList) {
                     String Payload1 = payload[0];
                     String Payload2 = payload[1];
-                    
-                    HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(), parameter_value + URLEncoder.encode(Payload1),
+
+                    HttpParameter updatedParameter = HttpParameter.parameter(parameter.name(),
+                            parameter_value + URLEncoder.encode(Payload1),
                             parameter.type());
                     HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                     HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
@@ -230,14 +284,16 @@ class MyScanCheck implements ScanCheck {
                         HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
                                 parameter_value + URLEncoder.encode(Payload2),
                                 parameter.type());
-                        HttpRequest checkRequest2 = baseRequestResponse.request().withUpdatedParameters(updatedParameter2);
+                        HttpRequest checkRequest2 = baseRequestResponse.request()
+                                .withUpdatedParameters(updatedParameter2);
                         HttpRequestResponse checkRequestResponse2 = sendrequest(checkRequest2);
                         String response_body2 = checkRequestResponse2.response().bodyToString();
                         double similarity = similar.lengthRatio(response_body1, response_body2);
                         if (similarity > 0.08) {
                             List<HttpRequestResponse> requestResponseList = new ArrayList<>();
                             requestResponseList.add(
-                                    HttpRequestResponse.httpRequestResponse(checkRequest, checkRequestResponse.response()));
+                                    HttpRequestResponse.httpRequestResponse(checkRequest,
+                                            checkRequestResponse.response()));
                             requestResponseList.add(HttpRequestResponse.httpRequestResponse(checkRequest2,
                                     checkRequestResponse2.response()));
                             auditIssueList.add(
@@ -260,7 +316,7 @@ class MyScanCheck implements ScanCheck {
                 HttpRequest checkRequest = baseRequestResponse.request().withUpdatedParameters(updatedParameter);
                 HttpRequestResponse checkRequestResponse = sendrequest(checkRequest);
                 String response_body1 = checkRequestResponse.response().bodyToString();
-                //order by
+                // order by
                 double similarity1 = similar.lengthRatio(response_body, response_body1);
                 if (similarity1 > 0.08) {
                     HttpParameter updatedParameter2 = HttpParameter.parameter(parameter.name(),
@@ -332,8 +388,9 @@ class MyScanCheck implements ScanCheck {
                         String new_json_list = json_list.replace(real_list_value,
                                 list_value.replace(json_value, json_value + "-a"));
                         String new_request_body = request_body.replace(json_list, new_json_list);
-                        if(is_urlencode){
-                            new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            new_request_body = URLEncoder.encode(new_request_body).replace("%3D", "=").replace("%26",
+                                    "&");
                         }
                         HttpRequest new_request = baseRequestResponse.request().withBody(new_request_body);
                         HttpRequestResponse new_response = sendrequest(new_request);
@@ -341,7 +398,7 @@ class MyScanCheck implements ScanCheck {
                         double similarity1 = similar.lengthRatio(response_body, response_body1);
                         if (similarity1 > 0.08) {
                             String new_json_list2 = json_list.replace(real_list_value,
-                                    list_value.replace(json_value, json_value + "-1"));
+                                    list_value.replace(json_value, json_value + "-0"));
                             String new_request_body2 = request_body.replace(json_list, new_json_list2);
                             HttpRequest new_request2 = baseRequestResponse.request().withBody(new_request_body2);
                             HttpRequestResponse new_response2 = sendrequest(new_request2);
@@ -374,14 +431,15 @@ class MyScanCheck implements ScanCheck {
                     for (String[] payload : payloadList) {
                         String Payload1 = payload[0];
                         String Payload2 = payload[1];
-                        
+
                         String new_json_list = json_list.replace(real_list_value,
                                 list_value.replace(json_value,
                                         json_value + Payload1));
                         String new_request_body = request_body.replace(json_list, new_json_list);
-                        if(is_urlencode){
-                                new_request_body = URLEncoder.encode(new_request_body).replace("%3D","=").replace("%26","&");
-                            }
+                        if (is_urlencode) {
+                            new_request_body = URLEncoder.encode(new_request_body).replace("%3D", "=").replace("%26",
+                                    "&");
+                        }
                         HttpRequest new_request = baseRequestResponse.request().withBody(new_request_body);
                         HttpRequestResponse new_response = sendrequest(new_request);
                         response_body1 = new_response.response().bodyToString();
@@ -391,8 +449,9 @@ class MyScanCheck implements ScanCheck {
                                     list_value.replace(json_value,
                                             json_value + Payload2));
                             String new_request_body2 = request_body.replace(json_list, new_json_list2);
-                            if(is_urlencode){
-                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            if (is_urlencode) {
+                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D", "=")
+                                        .replace("%26", "&");
                             }
                             HttpRequest new_request2 = baseRequestResponse.request().withBody(new_request_body2);
                             HttpRequestResponse new_response2 = sendrequest(new_request2);
@@ -401,9 +460,11 @@ class MyScanCheck implements ScanCheck {
                             if (similarity > 0.08) {
                                 List<HttpRequestResponse> requestResponseList = new ArrayList<>();
                                 requestResponseList
-                                        .add(HttpRequestResponse.httpRequestResponse(new_request, new_response.response()));
+                                        .add(HttpRequestResponse.httpRequestResponse(new_request,
+                                                new_response.response()));
                                 requestResponseList.add(
-                                        HttpRequestResponse.httpRequestResponse(new_request2, new_response2.response()));
+                                        HttpRequestResponse.httpRequestResponse(new_request2,
+                                                new_response2.response()));
                                 auditIssueList.add(
                                         auditIssue(
                                                 "SQL!",
@@ -423,8 +484,9 @@ class MyScanCheck implements ScanCheck {
                     String order_by_json_list = json_list.replace(real_list_value,
                             list_value.replace(json_value, json_value + ",0"));
                     String order_by_request_body = request_body.replace(json_list, order_by_json_list);
-                    if(is_urlencode){
-                        order_by_request_body = URLEncoder.encode(order_by_request_body).replace("%3D","=").replace("%26","&");
+                    if (is_urlencode) {
+                        order_by_request_body = URLEncoder.encode(order_by_request_body).replace("%3D", "=")
+                                .replace("%26", "&");
                     }
                     HttpRequest order_by_request = baseRequestResponse.request().withBody(order_by_request_body);
                     HttpRequestResponse order_by_response = sendrequest(order_by_request);
@@ -434,8 +496,9 @@ class MyScanCheck implements ScanCheck {
                         String order_by_json_list2 = json_list.replace(real_list_value,
                                 list_value.replace(json_value, json_value + ",1"));
                         String order_by_request_body2 = request_body.replace(json_list, order_by_json_list2);
-                        if(is_urlencode){
-                            order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D", "=")
+                                    .replace("%26", "&");
                         }
                         HttpRequest order_by_request2 = baseRequestResponse.request().withBody(order_by_request_body2);
                         HttpRequestResponse order_by_response2 = sendrequest(order_by_request2);
@@ -476,8 +539,18 @@ class MyScanCheck implements ScanCheck {
                 String json_real_value = m.group(5);
                 String json_value1 = m.group(4) + m.group(5);
                 // print(json_value1);
-                if (Pattern.matches(paramWhitelistText, json_real_key)) {
-                    continue;
+                // 检查参数是否在排除列表中
+                if (!excludeParamsText.isEmpty()) {
+                    boolean exclude = false;
+                    for (String excludePattern : excludeParamsText.split("\\n")) {
+                        if (!excludePattern.trim().isEmpty() && json_real_key.matches(excludePattern.trim())) {
+                            exclude = true;
+                            break;
+                        }
+                    }
+                    if (exclude) {
+                        continue;
+                    }
                 }
                 if ((json_value1.startsWith("\"") || json_value1.startsWith("\\\"") && !json_value1.startsWith("["))) {
                     String old_para = json_key1 + ":" + json_value1;
@@ -491,8 +564,9 @@ class MyScanCheck implements ScanCheck {
                         new_para1 = json_key1 + ":" + json_value1 + "-a";
                         new_para2 = json_key1 + ":" + json_value1 + "-0";
                         String new_request_body1 = request_body.replace(old_para, new_para1);
-                        if(is_urlencode){
-                            new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D", "=").replace("%26",
+                                    "&");
                         }
                         HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
                         HttpRequestResponse response1 = sendrequest(request1);
@@ -500,8 +574,9 @@ class MyScanCheck implements ScanCheck {
                         double json_similarity1 = similar.lengthRatio(response_body, response1_body);
                         if (json_similarity1 > 0.08) {
                             String new_request_body2 = request_body.replace(old_para, new_para2);
-                            if(is_urlencode){
-                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            if (is_urlencode) {
+                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D", "=")
+                                        .replace("%26", "&");
                             }
                             HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
                             HttpRequestResponse response2 = sendrequest(request2);
@@ -534,12 +609,13 @@ class MyScanCheck implements ScanCheck {
                     for (String[] payload : payloadList) {
                         String Payload1 = payload[0];
                         String Payload2 = payload[1];
-                        
+
                         new_para1 = json_key1 + ":" + json_value1 + Payload1;
                         new_para2 = json_key1 + ":" + json_value1 + Payload2;
                         String new_request_body1 = request_body.replace(old_para, new_para1);
-                        if(is_urlencode){
-                            new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D", "=").replace("%26",
+                                    "&");
                         }
                         HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
                         HttpRequestResponse response1 = sendrequest(request1);
@@ -547,8 +623,9 @@ class MyScanCheck implements ScanCheck {
                         double json_similarity1 = similar.lengthRatio(response_body, response1_body);
                         if (json_similarity1 > 0.08) {
                             String new_request_body2 = request_body.replace(old_para, new_para2);
-                            if(is_urlencode){
-                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                            if (is_urlencode) {
+                                new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D", "=")
+                                        .replace("%26", "&");
                             }
                             HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
                             HttpRequestResponse response2 = sendrequest(request2);
@@ -578,8 +655,9 @@ class MyScanCheck implements ScanCheck {
                     String order_by_para1 = json_key1 + ":" + json_value1 + ",0";
                     String order_by_para2 = json_key1 + ":" + json_value1 + ",1";
                     String order_by_request_body1 = request_body.replace(old_para, order_by_para1);
-                    if(is_urlencode){
-                        order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D","=").replace("%26","&");
+                    if (is_urlencode) {
+                        order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D", "=")
+                                .replace("%26", "&");
                     }
                     HttpRequest order_by_request1 = baseRequestResponse.request().withBody(order_by_request_body1);
                     HttpRequestResponse order_by_response1 = sendrequest(order_by_request1);
@@ -587,8 +665,9 @@ class MyScanCheck implements ScanCheck {
                     double order_by_json_similarity1 = similar.lengthRatio(response_body, order_by_response1_body);
                     if (order_by_json_similarity1 > 0.08) {
                         String order_by_request_body2 = request_body.replace(old_para, order_by_para2);
-                        if(is_urlencode){
-                            order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D", "=")
+                                    .replace("%26", "&");
                         }
                         HttpRequest order_by_request2 = baseRequestResponse.request().withBody(order_by_request_body2);
                         HttpRequestResponse order_by_response2 = sendrequest(order_by_request2);
@@ -618,11 +697,10 @@ class MyScanCheck implements ScanCheck {
                         }
 
                     }
-            
 
                 }
             }
-            //处理数字无双引号包裹或者null
+            // 处理数字无双引号包裹或者null
             String pattern2 = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+|null)";
             Pattern r2 = Pattern.compile(pattern2);
             // print(request_body);
@@ -635,23 +713,34 @@ class MyScanCheck implements ScanCheck {
                 String json_real_value = m2.group(5);
                 String json_value1 = m2.group(5);
                 // print(json_real_value);
-                if(json_real_value.equals("null")){
+                if (json_real_value.equals("null")) {
                     json_value1 = "1";
                 }
-                if (Pattern.matches(paramWhitelistText, json_real_key)) {
-                    continue;
+                // 检查参数是否在排除列表中
+                if (!excludeParamsText.isEmpty()) {
+                    boolean exclude = false;
+                    for (String excludePattern : excludeParamsText.split("\\n")) {
+                        if (!excludePattern.trim().isEmpty() && json_real_key.matches(excludePattern.trim())) {
+                            exclude = true;
+                            break;
+                        }
+                    }
+                    if (exclude) {
+                        continue;
+                    }
                 }
                 String old_para = json_key1 + ":" + json_real_value;
                 String new_para1 = "";
                 String new_para2 = "";
                 if (isNumericZidai(json_value1)) {
-                    new_para1 = json_key1 + ":"+ json_group_3 +json_value1 + "-a"+json_group_3;
-                    new_para2 = json_key1 + ":"+json_group_3 + json_value1 + "-0"+json_group_3;
+                    new_para1 = json_key1 + ":" + json_group_3 + json_value1 + "-a" + json_group_3;
+                    new_para2 = json_key1 + ":" + json_group_3 + json_value1 + "-0" + json_group_3;
                     // print(old_para);
                     // print(new_para1);
                     String new_request_body1 = request_body.replace(old_para, new_para1);
-                    if(is_urlencode){
-                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                    if (is_urlencode) {
+                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D", "=").replace("%26",
+                                "&");
                     }
                     HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
                     HttpRequestResponse response1 = sendrequest(request1);
@@ -659,8 +748,9 @@ class MyScanCheck implements ScanCheck {
                     double json_similarity1 = similar.lengthRatio(response_body, response1_body);
                     if (json_similarity1 > 0.08) {
                         String new_request_body2 = request_body.replace(old_para, new_para2);
-                        if(is_urlencode){
-                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D", "=").replace("%26",
+                                    "&");
                         }
                         HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
                         HttpRequestResponse response2 = sendrequest(request2);
@@ -693,12 +783,13 @@ class MyScanCheck implements ScanCheck {
                 for (String[] payload : payloadList) {
                     String Payload1 = payload[0];
                     String Payload2 = payload[1];
-                    
-                    new_para1 = json_key1 + ":"+json_group_3 + json_value1 + Payload1 +json_e_str +"\"";
-                    new_para2 = json_key1 + ":"+json_group_3 + json_value1 + Payload2 +json_e_str +"\"";
+
+                    new_para1 = json_key1 + ":" + json_group_3 + json_value1 + Payload1 + json_e_str + "\"";
+                    new_para2 = json_key1 + ":" + json_group_3 + json_value1 + Payload2 + json_e_str + "\"";
                     String new_request_body1 = request_body.replace(old_para, new_para1);
-                    if(is_urlencode){
-                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D","=").replace("%26","&");
+                    if (is_urlencode) {
+                        new_request_body1 = URLEncoder.encode(new_request_body1).replace("%3D", "=").replace("%26",
+                                "&");
                     }
                     HttpRequest request1 = baseRequestResponse.request().withBody(new_request_body1);
                     HttpRequestResponse response1 = sendrequest(request1);
@@ -706,8 +797,9 @@ class MyScanCheck implements ScanCheck {
                     double json_similarity1 = similar.lengthRatio(response_body, response1_body);
                     if (json_similarity1 > 0.08) {
                         String new_request_body2 = request_body.replace(old_para, new_para2);
-                        if(is_urlencode){
-                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D","=").replace("%26","&");
+                        if (is_urlencode) {
+                            new_request_body2 = URLEncoder.encode(new_request_body2).replace("%3D", "=").replace("%26",
+                                    "&");
                         }
                         HttpRequest request2 = baseRequestResponse.request().withBody(new_request_body2);
                         HttpRequestResponse response2 = sendrequest(request2);
@@ -734,11 +826,12 @@ class MyScanCheck implements ScanCheck {
                         }
                     }
                 }
-                String order_by_para1 = json_key1 + ":" +json_group_3+ json_value1 + ",0"+json_group_3;
-                String order_by_para2 = json_key1 + ":" +json_group_3+ json_value1 + ",1"+json_group_3;
+                String order_by_para1 = json_key1 + ":" + json_group_3 + json_value1 + ",0" + json_group_3;
+                String order_by_para2 = json_key1 + ":" + json_group_3 + json_value1 + ",1" + json_group_3;
                 String order_by_request_body1 = request_body.replace(old_para, order_by_para1);
-                if(is_urlencode){
-                    order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D","=").replace("%26","&");
+                if (is_urlencode) {
+                    order_by_request_body1 = URLEncoder.encode(order_by_request_body1).replace("%3D", "=")
+                            .replace("%26", "&");
                 }
                 HttpRequest order_by_request1 = baseRequestResponse.request().withBody(order_by_request_body1);
                 HttpRequestResponse order_by_response1 = sendrequest(order_by_request1);
@@ -746,8 +839,9 @@ class MyScanCheck implements ScanCheck {
                 double order_by_json_similarity1 = similar.lengthRatio(response_body, order_by_response1_body);
                 if (order_by_json_similarity1 > 0.08) {
                     String order_by_request_body2 = request_body.replace(old_para, order_by_para2);
-                    if(is_urlencode){
-                        order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D","=").replace("%26","&");
+                    if (is_urlencode) {
+                        order_by_request_body2 = URLEncoder.encode(order_by_request_body2).replace("%3D", "=")
+                                .replace("%26", "&");
                     }
                     HttpRequest order_by_request2 = baseRequestResponse.request().withBody(order_by_request_body2);
                     HttpRequestResponse order_by_response2 = sendrequest(order_by_request2);
@@ -777,16 +871,14 @@ class MyScanCheck implements ScanCheck {
                     }
 
                 }
-        
 
-                
             }
 
         }
-        
-        try{
+
+        try {
             return auditResult(auditIssueList);
-        }catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
             return auditResult();
         }
@@ -795,5 +887,75 @@ class MyScanCheck implements ScanCheck {
     @Override
     public ConsolidationAction consolidateIssues(AuditIssue newIssue, AuditIssue existingIssue) {
         return existingIssue.name().equals(newIssue.name()) ? KEEP_EXISTING : KEEP_BOTH;
+    }
+
+    // 主动扫描方法已在文件其他位置定义
+    private void do_active_scan(HttpRequestResponse requestResponse) {
+        new Thread(() -> {
+            boolean isPassiveScanEnabled = passiveScanEnabled;
+            boolean isProjectFilterEnabled = projectFilterEnabled;
+            projectFilterEnabled = false;
+            passiveScanEnabled = true;
+            // 执行被动扫描
+            // 注意：在Burp Montoya API中，当passiveAudit方法返回包含issues的AuditResult时，
+            // 这些issues会自动被Burp Suite注册并显示在Issues标签页中
+            List<AuditIssue> auditIssueList = passiveAudit(requestResponse).auditIssues();
+            for (AuditIssue auditIssue : auditIssueList) {
+                api.siteMap().add(auditIssue);
+            }
+            
+
+            passiveScanEnabled = isPassiveScanEnabled;
+            projectFilterEnabled = isProjectFilterEnabled;
+        }).start();
+    }
+
+    @Override
+    public List<Component> provideMenuItems(ContextMenuEvent event) {
+        List<Component> menuItems = new ArrayList<>();
+
+        // 修改逻辑：对于所有HTTP相关模块（包括Repeater），即使selectedItems为空也尝试添加菜单项
+        // 在Burp Suite中，Repeater模块的右键菜单会通过selectedRequestResponses()返回数据
+        JMenuItem scanMenuItem = new JMenuItem("使用FuckSQL主动扫描");
+        scanMenuItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                List<HttpRequestResponse> itemsToScan = event.selectedRequestResponses();
+                if (itemsToScan != null && !itemsToScan.isEmpty()) {
+                    // 遍历所有选中的请求/响应
+                    for (HttpRequestResponse requestResponse : itemsToScan) {
+                        if (requestResponse != null && requestResponse.request() != null) {
+
+                            do_active_scan(requestResponse);
+
+                        }
+                    }
+                } else {
+                    HttpRequestResponse requestResponse = event.messageEditorRequestResponse().isPresent()
+                            ? event.messageEditorRequestResponse().get().requestResponse()
+                            : event.selectedRequestResponses().get(0);
+
+                    do_active_scan(requestResponse);
+                }
+            }
+        });
+
+        // 在所有HTTP相关模块中添加菜单项，而不仅限于有选中项的情况
+        // 这是为了确保在Repeater等模块中能正确显示菜单
+        menuItems.add(scanMenuItem);
+
+        return menuItems;
+    }
+
+    @Override
+    public String checkName() {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'checkName'");
+    }
+
+    @Override
+    public AuditResult doCheck(HttpRequestResponse arg0) {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'doCheck'");
     }
 }

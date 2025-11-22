@@ -18,6 +18,10 @@ public class CustomScanChecks implements BurpExtension
     {
         api.extension().setName("fucksql");
 
-        api.scanner().registerScanCheck(new MyScanCheck(api));
+        // 注册扫描检查器，支持被动扫描和主动扫描
+        MyScanCheck scanCheck = new MyScanCheck(api);
+        api.scanner().registerScanCheck(scanCheck);
+        // 注册上下文菜单项提供者，支持右键主动扫描
+        api.userInterface().registerContextMenuItemsProvider(scanCheck);
     }
 }

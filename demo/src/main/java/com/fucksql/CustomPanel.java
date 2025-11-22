@@ -9,8 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class CustomPanel extends JPanel {
-    private JTextArea paramWhitelistArea;
-    private JTextArea urlWhitelistArea;
+    private JTextArea excludeParamsArea;
+    private JTextArea scanHostsArea;
     private JCheckBox enableProjectFilterCheckBox;
     private JTextField packetDelayField;
     private JButton confirmButton;
@@ -18,10 +18,13 @@ public class CustomPanel extends JPanel {
     private JTable payloadTable;
     private DefaultTableModel tableModel;
     private List<String[]> payloadList;
+    private JCheckBox enablePassiveScanCheckBox; // 被动扫描开关
+    private JCheckBox enableHostFilterCheckBox; // 开启host列表过滤（默认关闭）
+    private JCheckBox enableParamExclusionCheckBox; // 开启参数排除（默认开启）
 
     public CustomPanel() {
         setLayout(new BorderLayout(10, 10));
-        setBorder(BorderFactory.createEmptyBorder(30, 10, 30, 10));
+        setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
 
         // 初始化payload列表
         payloadList = new ArrayList<>();
@@ -29,19 +32,20 @@ public class CustomPanel extends JPanel {
         String[] defaultPayload = {"'", "''"};
         payloadList.add(defaultPayload);
 
-        // 创建顶部面板（原有功能）
-        JPanel topPanel = createTopPanel();
-        add(topPanel, BorderLayout.NORTH);
+        // 创建配置面板
+        JPanel configPanel = createConfigPanel();
+        add(configPanel, BorderLayout.NORTH);
 
-        // 创建底部面板（自定义payload功能）
-        JPanel bottomPanel = createBottomPanel();
-        add(bottomPanel, BorderLayout.CENTER);
+        // 创建自定义payload面板
+        JPanel payloadPanel = createPayloadPanel();
+        add(payloadPanel, BorderLayout.CENTER);
 
-        // 确认按钮事件监听（原有功能）
+        // 确认按钮事件监听
         confirmButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                // 原有功能不变
+                // 可以在这里添加确认操作的逻辑
+                JOptionPane.showMessageDialog(CustomPanel.this, "配置已保存！", "成功", JOptionPane.INFORMATION_MESSAGE);
             }
         });
 
@@ -54,45 +58,91 @@ public class CustomPanel extends JPanel {
         });
     }
 
-    // 创建顶部面板（原有功能）
-    private JPanel createTopPanel() {
-        JPanel Panel1 = new JPanel();
-        Panel1.setLayout(new GridLayout(1, 2, 10, 10));
-        paramWhitelistArea = new JTextArea(5, 30);
-        urlWhitelistArea = new JTextArea(5, 30);
-        paramWhitelistArea.setLineWrap(true);
-        urlWhitelistArea.setLineWrap(true);
-        paramWhitelistArea.setBorder(BorderFactory.createLineBorder(Color.BLACK));
-        urlWhitelistArea.setBorder(BorderFactory.createLineBorder(Color.BLACK));
-        Panel1.add(new JLabel("参数白名单："), BorderLayout.NORTH);
-        Panel1.add(paramWhitelistArea, BorderLayout.CENTER);
-        Panel1.add(new JLabel("URL白名单："), BorderLayout.NORTH);
-        Panel1.add(urlWhitelistArea, BorderLayout.CENTER);
-
-        JPanel optionsPanel = new JPanel();
-        optionsPanel.setLayout(new GridLayout(3, 1, 0, 0));
-        packetDelayField = new JTextField(1);
+    // 创建配置面板
+    private JPanel createConfigPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new GridLayout(2, 1, 20, 20));
+        panel.setBorder(BorderFactory.createTitledBorder("扫描配置"));
+        
+        // 第一行：扫描host列表和排除参数列表
+        JPanel listsPanel = new JPanel(new GridLayout(1, 2, 20, 20));
+        
+        // 扫描host列表
+        JPanel scanHostsPanel = new JPanel(new BorderLayout(5, 5));
+        scanHostsArea = new JTextArea(5, 25);
+        scanHostsArea.setLineWrap(true);
+        scanHostsArea.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
+        scanHostsArea.setToolTipText("每行输入一个host，例如: example.com");
+        JScrollPane scanHostsScroll = new JScrollPane(scanHostsArea);
+        scanHostsPanel.add(new JLabel("扫描Host列表(每行输入一个)："), BorderLayout.NORTH);
+        scanHostsPanel.add(scanHostsScroll, BorderLayout.CENTER);
+        
+        // 排除参数列表
+        JPanel excludeParamsPanel = new JPanel(new BorderLayout(5, 5));
+        excludeParamsArea = new JTextArea(5, 25);
+        excludeParamsArea.setLineWrap(true);
+        excludeParamsArea.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
+        excludeParamsArea.setToolTipText("每行输入一个参数名，例如: id, username");
+        JScrollPane excludeParamsScroll = new JScrollPane(excludeParamsArea);
+        excludeParamsPanel.add(new JLabel("排除参数列表(每行输入一个)："), BorderLayout.NORTH);
+        excludeParamsPanel.add(excludeParamsScroll, BorderLayout.CENTER);
+        
+        listsPanel.add(scanHostsPanel);
+        listsPanel.add(excludeParamsPanel);
+        
+        // 第二行：选项配置
+        JPanel optionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 20, 10));
+        
+        JPanel packetDelayPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        packetDelayField = new JTextField(5);
+        packetDelayField.setPreferredSize(new Dimension(60, 25));
+        packetDelayField.setText("0");
+        packetDelayPanel.add(new JLabel("发包延时(秒)："));
+        packetDelayPanel.add(packetDelayField);
+        
+        JPanel projectFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         enableProjectFilterCheckBox = new JCheckBox();
         enableProjectFilterCheckBox.setSelected(true);
-        packetDelayField.setPreferredSize(new Dimension(packetDelayField.getPreferredSize().width, 20));
-        packetDelayField.setText("0");
-        confirmButton = new JButton("确定");
-        optionsPanel.add(new JLabel("发包延时："));
-        optionsPanel.add(packetDelayField);
-        optionsPanel.add(new JLabel("是否开启项目范围过滤："));
-        optionsPanel.add(enableProjectFilterCheckBox);
+        projectFilterPanel.add(new JLabel("开启项目范围过滤(主动扫描不受此限制)："));
+        projectFilterPanel.add(enableProjectFilterCheckBox);
+        
+        JPanel passiveScanPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        enablePassiveScanCheckBox = new JCheckBox();
+        enablePassiveScanCheckBox.setSelected(false); // 默认不开启被动扫描
+        passiveScanPanel.add(new JLabel("开启被动扫描："));
+        passiveScanPanel.add(enablePassiveScanCheckBox);
+        
+        JPanel hostFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        enableHostFilterCheckBox = new JCheckBox();
+        enableHostFilterCheckBox.setSelected(false); // 默认关闭
+        hostFilterPanel.add(new JLabel("开启host列表过滤："));
+        hostFilterPanel.add(enableHostFilterCheckBox);
+        
+        JPanel paramExclusionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        enableParamExclusionCheckBox = new JCheckBox();
+        enableParamExclusionCheckBox.setSelected(true); // 默认开启
+        paramExclusionPanel.add(new JLabel("开启参数排除："));
+        paramExclusionPanel.add(enableParamExclusionCheckBox);
+        
+        confirmButton = new JButton("保存配置");
+        confirmButton.setPreferredSize(new Dimension(100, 30));
+        
+        optionsPanel.add(packetDelayPanel);
+        optionsPanel.add(projectFilterPanel);
+        optionsPanel.add(passiveScanPanel);
+        optionsPanel.add(hostFilterPanel);
+        optionsPanel.add(paramExclusionPanel);
+        optionsPanel.add(Box.createHorizontalGlue());
         optionsPanel.add(confirmButton);
-
-        JPanel fieldsPanel = new JPanel();
-        fieldsPanel.setLayout(new GridLayout(1, 1, 5, 5));
-        fieldsPanel.add(Panel1);
-        fieldsPanel.add(optionsPanel);
-
-        return fieldsPanel;
+        
+        panel.add(listsPanel);
+        panel.add(optionsPanel);
+        
+        return panel;
     }
 
-    // 创建底部面板（自定义payload功能）
-    private JPanel createBottomPanel() {
+    // 创建自定义payload面板
+    private JPanel createPayloadPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBorder(BorderFactory.createTitledBorder("自定义Payload"));
 
@@ -284,12 +334,22 @@ public class CustomPanel extends JPanel {
         return new Dimension(700, 600);
     }
 
+    // 保留原有的getter方法以保持向后兼容，但内部使用新的组件
     public JTextArea getParamWhitelistArea() {
-        return paramWhitelistArea;
+        return excludeParamsArea;
     }
 
     public JTextArea getUrlWhitelistArea() {
-        return urlWhitelistArea;
+        return scanHostsArea;
+    }
+    
+    // 新的getter方法
+    public JTextArea getExcludeParamsArea() {
+        return excludeParamsArea;
+    }
+
+    public JTextArea getScanHostsArea() {
+        return scanHostsArea;
     }
 
     public JCheckBox getEnableProjectFilterCheckBox() {
@@ -306,5 +366,58 @@ public class CustomPanel extends JPanel {
     
     public List<String[]> getPayloadList() {
         return payloadList;
+    }
+    
+    // 获取文本内容的便捷方法
+    public String getExcludeParamsText() {
+        return excludeParamsArea != null ? excludeParamsArea.getText() : "";
+    }
+    
+    public String getScanHostsText() {
+        return scanHostsArea != null ? scanHostsArea.getText() : "";
+    }
+    
+    public String getParamWhitelistText() {
+        return getExcludeParamsText(); // 保持向后兼容
+    }
+    
+    public String getUrlWhitelistText() {
+        return getScanHostsText(); // 保持向后兼容
+    }
+    
+    public int getPacketDelay() {
+        try {
+            return Integer.parseInt(packetDelayField != null ? packetDelayField.getText() : "0");
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+    
+    public boolean isProjectFilterEnabled() {
+        return enableProjectFilterCheckBox != null && enableProjectFilterCheckBox.isSelected();
+    }
+    
+    public JCheckBox getEnablePassiveScanCheckBox() {
+        return enablePassiveScanCheckBox;
+    }
+    
+    public boolean isPassiveScanEnabled() {
+        return enablePassiveScanCheckBox != null && enablePassiveScanCheckBox.isSelected();
+    }
+    
+    public JCheckBox getEnableHostFilterCheckBox() {
+        return enableHostFilterCheckBox;
+    }
+    
+    public boolean isHostFilterEnabled() {
+        return enableHostFilterCheckBox != null && enableHostFilterCheckBox.isSelected();
+    }
+    
+    public JCheckBox getEnableParamExclusionCheckBox() {
+        return enableParamExclusionCheckBox;
+    }
+    
+    public boolean isParamExclusionEnabled() {
+        return enableParamExclusionCheckBox != null && enableParamExclusionCheckBox.isSelected();
     }
 }
