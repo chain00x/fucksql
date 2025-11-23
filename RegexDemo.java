@@ -3,7 +3,7 @@ import java.util.regex.Pattern;
 
 public class RegexDemo {
     public static void main(String[] args) {
-        String input = "{\"a\":{\"b\":\"\",\"d\":[1]}}";
+        String input = "{\"id\":1}}";
         String pattern = "(\"|\\\\\")(\\S+?)(\"|\\\\\"):(\"|\\\\\")(?!\\{)(.*?)(\"|\\\\\")"; // 匹配一个或多个数字
 
         // 创建Pattern对象

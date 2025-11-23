@@ -351,7 +351,7 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
 
         }
         // json
-        if (request_body.contains("\":\"")
+        if (request_body.contains("\":")
                 || request_body.contains("\":[\"")) {
             // json list
             Pattern p_list = Pattern.compile("(\"|\\\\\")(\\S+?)(\"|\\\\\"):\\[(.*?)\\]");
@@ -703,7 +703,6 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
             // 处理数字无双引号包裹或者null
             String pattern2 = "(\"|\\\\\")(\\S+?)(\"|\\\\\")(:\\[?)(\\d+|null)";
             Pattern r2 = Pattern.compile(pattern2);
-            // print(request_body);
             Matcher m2 = r2.matcher(request_body);
             while (m2.find()) {
                 String json_e_str = m2.group(3).replace("\"", "");
