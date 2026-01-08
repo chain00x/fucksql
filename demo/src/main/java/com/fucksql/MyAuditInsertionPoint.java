@@ -45,6 +45,7 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static burp.api.montoya.scanner.AuditResult.auditResult;
 import static burp.api.montoya.scanner.ConsolidationAction.KEEP_BOTH;
@@ -61,6 +62,8 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
     boolean passiveScanEnabled = false; // 被动扫描开关状态，默认关闭
     boolean hostFilterEnabled = false; // host列表过滤开关状态，默认关闭
     boolean paramExclusionEnabled = true; // 参数排除开关状态，默认开启
+    private volatile boolean isAnyActiveScanRunning = false; // 标记是否有任何主动扫描正在运行
+    private ThreadLocal<Boolean> isActiveScanThread = ThreadLocal.withInitial(() -> false); // 标记当前线程是否是主动扫描线程
     // 保存CustomPanel实例引用
     private CustomPanel customPanel;
 
@@ -104,7 +107,7 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
     public HttpRequestResponse sendrequest(HttpRequest request) {
         if (packetDelay > 0) {
             try {
-                Thread.sleep(packetDelay);
+                Thread.sleep(packetDelay * 1000L);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -117,6 +120,12 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
     public AuditResult passiveAudit(HttpRequestResponse baseRequestResponse) {
         // 检查被动扫描是否启用，如果未启用则直接返回
         if (!passiveScanEnabled) {
+            return auditResult();
+        }
+
+        // 如果有主动扫描正在运行，且当前线程不是主动扫描线程，则跳过被动扫描
+        // 这样可以避免主动扫描期间产生的流量被重复扫描，但主动扫描本身的调用仍然会执行
+        if (isAnyActiveScanRunning && !isActiveScanThread.get()) {
             return auditResult();
         }
 
@@ -895,18 +904,21 @@ class MyScanCheck implements ScanCheck, ContextMenuItemsProvider,PassiveScanChec
             boolean isProjectFilterEnabled = projectFilterEnabled;
             projectFilterEnabled = false;
             passiveScanEnabled = true;
-            // 执行被动扫描
-            // 注意：在Burp Montoya API中，当passiveAudit方法返回包含issues的AuditResult时，
-            // 这些issues会自动被Burp Suite注册并显示在Issues标签页中
-            List<AuditIssue> auditIssueList = passiveAudit(requestResponse).auditIssues();
-            for (AuditIssue auditIssue : auditIssueList) {
-                api.siteMap().add(auditIssue);
+            isAnyActiveScanRunning = true; // 标记有主动扫描正在运行
+            isActiveScanThread.set(true); // 标记当前线程是主动扫描线程
+            try {
+                List<AuditIssue> auditIssueList = passiveAudit(requestResponse).auditIssues();
+                for (AuditIssue auditIssue : auditIssueList) {
+                    api.siteMap().add(auditIssue);
+                }
+            } finally {
+                isActiveScanThread.set(false); // 清除主动扫描线程标记
+                isAnyActiveScanRunning = false; // 清除主动扫描运行标记
+                passiveScanEnabled = isPassiveScanEnabled;
+                projectFilterEnabled = isProjectFilterEnabled;
             }
-            
-
-            passiveScanEnabled = isPassiveScanEnabled;
-            projectFilterEnabled = isProjectFilterEnabled;
         }).start();
+        
     }
 
     @Override
